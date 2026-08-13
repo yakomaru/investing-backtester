@@ -1,0 +1,23 @@
+# Personal / sensitive data — never commit
+info.txt
+
+# Personal financial analysis (contains net worth, age, Social Security figures)
+swr-team/PLAN.md
+swr-team/REPORT.md
+swr-team/quant/mortality.py
+swr-team/quant/retire39.py
+swr-team/quant/va_decum.py
+swr-team/quant/va_decum2.py
+swr-team/quant/run_va.py
+swr-team/quant/run_va2.py
+swr-team/quant/run_retire39.py
+swr-team/quant/run_retire39_v2.py
+swr-team/quant/supplement_retire.py
+
+# Machine-local Claude Code settings (permissions, etc.)
+.claude/settings.local.json
+
+# Python
+venv/
+__pycache__/
+*.pyc
