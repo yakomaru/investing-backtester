@@ -21,3 +21,6 @@ swr-team/quant/supplement_retire.py
 venv/
 __pycache__/
 *.pyc
+
+# Scraped reference HTML (also keeps GitHub from tagging the repo as HTML)
+*.html
