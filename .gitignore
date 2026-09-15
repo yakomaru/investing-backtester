@@ -24,3 +24,6 @@ __pycache__/
 
 # Scraped reference HTML (also keeps GitHub from tagging the repo as HTML)
 *.html
+
+# pytest
+.pytest_cache/
