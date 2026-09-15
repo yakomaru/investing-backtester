@@ -17,15 +17,59 @@ Return series come from shiller_monthly.csv (built by load_data.py):
 """
 import numpy as np
 import pandas as pd
+from pathlib import Path
+from typing import NamedTuple
 
-df = pd.read_csv("shiller_monthly.csv")
-RS = df["stock_ret_real"].values   # monthly real stock return
-RB = df["bond_ret_real"].values    # monthly real bond return
-CAPE = df["CAPE"].values
-YEAR = df["year"].values
-MONTH = df["month"].values
-N = len(df)
-BASE_YEAR = int(YEAR[0])            # 1871
+DEFAULT_CSV = Path(__file__).with_name("shiller_monthly.csv")
+
+
+class Series(NamedTuple):
+    """One monthly real-return world: the arrays every backtest reads.
+
+    Bundled behind `load_series` so the data can be loaded from an explicit
+    path instead of only from the process's current working directory, which
+    is what previously made this module importable only from inside
+    swr-team/quant/.
+    """
+    df: pd.DataFrame
+    RS: np.ndarray        # monthly real stock return
+    RB: np.ndarray        # monthly real bond return
+    CAPE: np.ndarray
+    YEAR: np.ndarray
+    MONTH: np.ndarray
+    N: int
+    BASE_YEAR: int        # first year in the file (1871 for the Shiller series)
+
+
+def load_series(path=DEFAULT_CSV):
+    """Load the monthly series from `path`, defaulting to the CSV beside this file."""
+    df = pd.read_csv(path)
+    year = df["year"].values
+    return Series(
+        df=df,
+        RS=df["stock_ret_real"].values,
+        RB=df["bond_ret_real"].values,
+        CAPE=df["CAPE"].values,
+        YEAR=year,
+        MONTH=df["month"].values,
+        N=len(df),
+        BASE_YEAR=int(year[0]),
+    )
+
+
+# The default series, loaded at import as before. The existing run_*.py scripts
+# read these bare module names (bt.RS, bt.CAPE, bt.N, ...), so they are kept
+# exactly as they were; the only behavioural change is that the CSV is now
+# located relative to this file rather than the current working directory.
+SERIES = load_series()
+df = SERIES.df
+RS = SERIES.RS
+RB = SERIES.RB
+CAPE = SERIES.CAPE
+YEAR = SERIES.YEAR
+MONTH = SERIES.MONTH
+N = SERIES.N
+BASE_YEAR = SERIES.BASE_YEAR
 
 def jan_index(y):
     """Month index of January of year y (data is contiguous from Jan 1871)."""
