@@ -28,7 +28,7 @@ All code lives in [`swr-team/quant/`](swr-team/quant/).
 ```bash
 cd swr-team/quant
 python3 -m venv venv
-./venv/bin/pip install pandas numpy xlrd openpyxl
+./venv/bin/pip install pandas numpy xlrd openpyxl pytest
 
 # 1. build the clean monthly real-return series (already checked in as shiller_monthly.csv)
 ./venv/bin/python load_data.py       # ie_data.xls -> shiller_monthly.csv (+ validation)
@@ -44,6 +44,44 @@ python3 -m venv venv
 ./venv/bin/python dip_calm.py        # how often dip-DCA == plain DCA
 ```
 
+## Invariant harness
+
+The engine has one known historical failure mode: a strategy that keeps returning
+plausible numbers while silently running an allocation nobody asked for. A correctly
+implemented rule once converted a cash-buffered strategy into an all-equity one, and it
+was caught by a human reading results rather than by anything in the code.
+
+`tests/` encodes the properties a strategy has to satisfy so that class of failure fails
+loudly instead. Run it from the repository root:
+
+```bash
+swr-team/quant/venv/bin/pip install pytest
+swr-team/quant/venv/bin/python -m pytest tests/ -q
+```
+
+What it guarantees, and what each property is there to catch:
+
+| Invariant | Catches |
+|---|---|
+| **Golden snapshots** (`test_golden.py`) | Any change that moves a published number. Byte-for-byte match of `run_analysis.py`'s output, plus a check that the `strategies.py` catalog reproduces the headline table it duplicates. |
+| **Allocation conformance** (`test_allocation.py`) | A strategy whose realized weights are not the ones it declares — the original bug. Envelopes are asserted *tight*, so a strategy cannot buy conformance by declaring `(0.0, 1.0)` and conforming to nothing. |
+| **Cash-bucket conformance** (`test_cash_buffer.py`) | The same check against the three-bucket decumulation engine, which is where the original bug actually lived. Skips when that engine is absent (it is untracked). |
+| **Simulate contract** (`test_simulate_contract.py`) | Failure-path bookkeeping: a cohort that runs out mid-retirement still returns full-length, zero-padded paths, and the withdrawal that broke it reconciles against the prior year's ending balance. |
+| **Search soundness** (`test_search.py`) | SAFEMAX is *searched for*, not measured. Pins the precondition that makes bisection valid (success is monotone in the withdrawal rate), that the result brackets the true failure point, and that SAFEMAX never rises with the horizon. |
+| **Policy reuse** (`test_policy_reuse.py`) | A spending policy leaking state between cohorts. Currently green by construction; it exists because one plausible-looking edit to `CapeInitial` would silently turn every cohort into a rerun of the first. |
+
+Two design notes worth knowing before extending it:
+
+- **`max_sustainable_wr` raises rather than returning its ceiling.** The binary search runs
+  under `hi=0.20`. At horizons of three years or less *every* cohort can sustain more than
+  that, so the old code returned the bound as though it were an answer. It now raises
+  `SearchSaturated`. The headline 30- and 40-year runs peak at 11.0%, so nothing published
+  goes near it.
+- **Realized cash share is not capped at 15%.** `CASH_CAP` limits how much the harvest leg
+  may move *into* cash, not the resulting share. When the sleeve crashes the denominator
+  shrinks and the cash fraction rises above the cap on its own. The cap is asserted only
+  where the engine enforces it outright, at a static rebalance.
+
 ## Repository layout
 
 | File | What it does |
@@ -58,6 +96,8 @@ python3 -m venv venv
 | `swr-team/quant/deploy.py` | Lump vs. DCA vs. half-and-half deployment |
 | `swr-team/quant/dip_dca.py` | Dip-accelerated dollar-cost averaging |
 | `swr-team/quant/dip_calm.py` | Dip-DCA vs. plain DCA in calm markets |
+| `swr-team/quant/strategies.py` | Declared allocation envelopes bound to the weights and policies meant to implement them |
+| `tests/` | The invariant harness (see above) |
 
 ## Method notes
 
