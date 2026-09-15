@@ -18,7 +18,7 @@ Return series come from shiller_monthly.csv (built by load_data.py):
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from typing import NamedTuple
+from typing import Callable, NamedTuple, Protocol, runtime_checkable
 
 DEFAULT_CSV = Path(__file__).with_name("shiller_monthly.csv")
 
@@ -140,6 +140,47 @@ def simulate(start_idx, H, weight_fn, policy):
 
 
 # ----------------------------------------------------------------------------
+# the two plug-in points of a backtest, named
+# ----------------------------------------------------------------------------
+WeightFn = Callable[[int], float]
+"""Target equity weight for retirement year `yr`.
+
+Takes `yr` and nothing else on purpose: a weight function is structurally
+incapable of seeing a return, so allocation cannot react to the future. That
+property is enforced by this signature, not by a test.
+"""
+
+
+@runtime_checkable
+class SpendingPolicy(Protocol):
+    """What `simulate` requires of a spending rule.
+
+    This protocol was always implicit -- FixedReal, CapeInitial and
+    GuytonKlinger have satisfied it since they were written. Naming it gives
+    `Strategy` (see strategies.py) something to bind a declared allocation to,
+    and gives the invariants a single contract to check against.
+
+    `initial_wr` is the rate the policy started from, which is what the
+    guardrail logic and the reporting scripts read back afterwards. Note that
+    CapeInitial cannot know it until the cohort's CAPE is seen, so it is None
+    until `next_spend` has been called with yr == 0.
+
+    `next_spend` receives (yr, port, prev, cape0) and nothing else -- like
+    WeightFn, it has no channel through which future returns could reach it.
+
+    runtime_checkable so the harness can assert conformance with isinstance.
+    That only verifies the members exist, not their signatures, which is the
+    right strength here: it catches a policy that forgot `initial_wr`, and it
+    does not pretend to catch one whose arithmetic is wrong.
+    """
+
+    initial_wr: float
+
+    def next_spend(self, yr: int, port: float, prev, cape0: float) -> float:
+        ...
+
+
+# ----------------------------------------------------------------------------
 # spending policies
 # ----------------------------------------------------------------------------
 class FixedReal:
@@ -201,8 +242,33 @@ def success_rate(H, weight_fn, policy_factory, start_years):
         ok += r["success"]
     return ok / len(start_years)
 
+class SearchSaturated(RuntimeError):
+    """max_sustainable_wr was asked for a rate above the ceiling it searches under.
+
+    Raised instead of returning `hi`, which would be a bound wearing the costume
+    of an answer. See the guard in max_sustainable_wr for why this matters.
+    """
+
+
 def max_sustainable_wr(start_idx, H, weight_fn, lo=0.0, hi=0.20, tol=1e-5):
-    """Highest fixed-real WR this cohort can sustain for H years (binary search)."""
+    """Highest fixed-real WR this cohort can sustain for H years (binary search).
+
+    Raises SearchSaturated if the cohort can already sustain `hi`, because the
+    search cannot then distinguish "the answer is 20%" from "the answer is at
+    least 20%" -- it converges lo up to hi and returns the ceiling silently.
+    That is not hypothetical: at H<=3 every cohort in the Shiller series
+    saturates (the true answer at H=1 is ~100%), and at H=5 116 of 148 do. The
+    headline H=30/40 runs peak at 11.0%, so nothing published goes near it.
+
+    The check is an explicit simulate at `hi` rather than an after-the-fact
+    `lo >= hi - tol` test, so the precondition is verified before the search
+    runs rather than inferred from where it landed.
+    """
+    if simulate(start_idx, H, weight_fn, FixedReal(hi))["success"]:
+        raise SearchSaturated(
+            f"cohort at index {start_idx} sustains the search ceiling hi={hi:.4f} "
+            f"for H={H}, so the true max is above it; raise hi to get a real answer"
+        )
     for _ in range(40):
         mid = (lo + hi) / 2
         if simulate(start_idx, H, weight_fn, FixedReal(mid))["success"]:
