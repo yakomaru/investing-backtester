@@ -181,6 +181,29 @@ def test_catalog_reproduces_guardrail_headline_row(name):
     assert round(float(np.median(end_fracs)) * 100, 2) == pytest.approx(final_med_e, abs=0.005)
 
 
+def test_interval_envelope_strategies_are_pinned_to_a_safemax():
+    """Any strategy with a non-degenerate envelope must appear in HEADLINE.
+
+    Tightness only pins the two ends of an envelope, not the shape of the path
+    between them: glidepath(0.60, 1.00, 1) conforms to (0.60, 1.00) and is
+    tight while holding 100% equity for 29 of its 30 years. What actually
+    catches that is the published SAFEMAX, which moves when the glide duration
+    does -- so the real requirement is that every interval-envelope strategy
+    has a SAFEMAX pinned. Stated structurally rather than per-entry so a
+    glidepath added later cannot slip in unpinned.
+    """
+    pinned = {n for n, _ in HEADLINE}
+    loose = [
+        s.name for s in st.CATALOG
+        if s.equity_min != s.equity_max and s.name not in pinned
+    ]
+    assert not loose, (
+        f"strategies with an interval envelope and no pinned SAFEMAX: {loose}. "
+        f"Tightness alone cannot see the shape of their weight path; add a "
+        f"HEADLINE row."
+    )
+
+
 def test_every_catalog_strategy_is_tied_to_a_published_number():
     """No catalog entry escapes all three headline tables.
 

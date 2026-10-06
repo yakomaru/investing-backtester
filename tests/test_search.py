@@ -46,6 +46,30 @@ def test_search_refuses_to_return_its_own_ceiling():
             assert got < 0.20, f"{year} at H={horizon} reached the search ceiling"
 
 
+def test_search_refuses_to_return_an_unsustainable_floor():
+    """A bracket whose `lo` already fails raises instead of returning `lo`.
+
+    The mirror image of the ceiling guard, and the sharper of the two: a
+    saturated ceiling returns a rate that is merely too low to be the answer,
+    while an unsustainable floor returns a rate that *does not survive the
+    horizon* and presents it as the safe withdrawal rate. Verified before
+    fixing -- max_sustainable_wr for 1966 at H=30 with lo=0.05 returned exactly
+    0.050000, and simulating at that rate runs the portfolio out.
+
+    Cannot fire on the default bracket, where lo=0.0 and withdrawing nothing
+    always succeeds. It exists for the caller who narrows the bracket to save
+    iterations, which is the only way to reach it and gives no other signal.
+    """
+    i = bt.jan_index(1966)
+    with pytest.raises(bt.SearchBracketInvalid):
+        bt.max_sustainable_wr(i, 30, WF, lo=0.05)
+
+    # The default bracket is unaffected, and its answer really is sustainable.
+    got = bt.max_sustainable_wr(i, 30, WF)
+    assert got < 0.05
+    assert bt.simulate(i, 30, WF, bt.FixedReal(got))["success"]
+
+
 # ---------------------------------------------------------------------------
 # invariant M -- monotonicity in the withdrawal rate
 # ---------------------------------------------------------------------------

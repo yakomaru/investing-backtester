@@ -242,32 +242,57 @@ def success_rate(H, weight_fn, policy_factory, start_years):
         ok += r["success"]
     return ok / len(start_years)
 
-class SearchSaturated(RuntimeError):
-    """max_sustainable_wr was asked for a rate above the ceiling it searches under.
+class SearchBracketInvalid(RuntimeError):
+    """max_sustainable_wr's answer lies outside the bracket it was given.
 
-    Raised instead of returning `hi`, which would be a bound wearing the costume
-    of an answer. See the guard in max_sustainable_wr for why this matters.
+    Bisection on a success flag is only meaningful when the bracket straddles
+    the answer: `lo` must be sustainable and `hi` must not. If either end is
+    wrong the search still converges and still returns a number, and that
+    number is a bound wearing the costume of an answer. Raised at both ends --
+    see the guards in max_sustainable_wr.
     """
+
+
+# Kept as an alias: the hi-side case really is saturation, and that is the one
+# a caller is likely to hit.
+SearchSaturated = SearchBracketInvalid
 
 
 def max_sustainable_wr(start_idx, H, weight_fn, lo=0.0, hi=0.20, tol=1e-5):
     """Highest fixed-real WR this cohort can sustain for H years (binary search).
 
-    Raises SearchSaturated if the cohort can already sustain `hi`, because the
-    search cannot then distinguish "the answer is 20%" from "the answer is at
-    least 20%" -- it converges lo up to hi and returns the ceiling silently.
-    That is not hypothetical: at H<=3 every cohort in the Shiller series
-    saturates (the true answer at H=1 is ~100%), and at H=5 116 of 148 do. The
-    headline H=30/40 runs peak at 11.0%, so nothing published goes near it.
+    Raises SearchBracketInvalid if the answer is outside [lo, hi], at either
+    end. Bisection converges regardless and returns a number either way, which
+    is the whole problem.
 
-    The check is an explicit simulate at `hi` rather than an after-the-fact
+    The `hi` end: if the cohort can already sustain `hi`, the search cannot
+    distinguish "the answer is 20%" from "the answer is at least 20%" -- it
+    converges lo up to hi and returns the ceiling silently. Not hypothetical:
+    at H<=3 every cohort in the Shiller series saturates (the true answer at
+    H=1 is ~100%), and at H=5, 116 of 148 do.
+
+    The `lo` end: if `lo` itself is unsustainable, every probe fails, `hi`
+    converges down to `lo`, and the function returns `lo` -- a rate that does
+    not survive the horizon. With the default lo=0.0 this cannot happen, since
+    withdrawing nothing always succeeds, but a caller narrowing the bracket
+    gets a failing rate presented as the safe one: max_sustainable_wr for 1966
+    at H=30 with lo=0.05 returns exactly 0.050000, and that rate runs out.
+
+    Both checks are explicit simulates rather than an after-the-fact
     `lo >= hi - tol` test, so the precondition is verified before the search
-    runs rather than inferred from where it landed.
+    runs rather than inferred from where it landed. The headline H=30/40 runs
+    use the default bracket and peak at 11.0%, so neither guard fires there.
     """
     if simulate(start_idx, H, weight_fn, FixedReal(hi))["success"]:
-        raise SearchSaturated(
+        raise SearchBracketInvalid(
             f"cohort at index {start_idx} sustains the search ceiling hi={hi:.4f} "
             f"for H={H}, so the true max is above it; raise hi to get a real answer"
+        )
+    if not simulate(start_idx, H, weight_fn, FixedReal(lo))["success"]:
+        raise SearchBracketInvalid(
+            f"cohort at index {start_idx} cannot sustain the search floor "
+            f"lo={lo:.4f} for H={H}, so the true max is below it; lower lo to "
+            f"get a real answer rather than lo itself, which fails"
         )
     for _ in range(40):
         mid = (lo + hi) / 2

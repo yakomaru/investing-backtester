@@ -64,19 +64,22 @@ What it guarantees, and what each property is there to catch:
 | Invariant | Catches |
 |---|---|
 | **Golden snapshots** (`test_golden.py`) | Any change that moves a published number. Byte-for-byte match of `run_analysis.py`'s output, plus a check that the `strategies.py` catalog reproduces the headline table it duplicates. |
-| **Allocation conformance** (`test_allocation.py`) | A strategy whose realized weights are not the ones it declares — the original bug. Envelopes are asserted *tight*, so a strategy cannot buy conformance by declaring `(0.0, 1.0)` and conforming to nothing. |
-| **Cash-bucket conformance** (`test_cash_buffer.py`) | The same check against the three-bucket decumulation engine, which is where the original bug actually lived. Skips when that engine is absent (it is untracked). |
+| **Allocation conformance** (`test_allocation.py`) | A strategy whose realized allocation is not the one it declares — the original bug. Two halves, and both are needed: the declared schedule must sit tightly inside the declared envelope, so the catalog cannot disagree with itself; and `simulate()` must actually blend at those weights, so the engine cannot ignore them. Checking only the first is a declaration against a declaration and stays green while the engine runs all-equity. |
+| **Cash-bucket conformance** (`test_cash_buffer.py`) | The same check against the three-bucket decumulation engine, which is where the original bug actually lived. 93 of the 278 collected tests live here and **skip entirely** when that engine is absent, which includes every clone of this repo — the engine holds personal financial figures and is untracked by design. |
 | **Simulate contract** (`test_simulate_contract.py`) | Failure-path bookkeeping: a cohort that runs out mid-retirement still returns full-length, zero-padded paths, and the withdrawal that broke it reconciles against the prior year's ending balance. |
 | **Search soundness** (`test_search.py`) | SAFEMAX is *searched for*, not measured. Pins the precondition that makes bisection valid (success is monotone in the withdrawal rate), that the result brackets the true failure point, and that SAFEMAX never rises with the horizon. |
 | **Policy reuse** (`test_policy_reuse.py`) | A spending policy leaking state between cohorts. Currently green by construction; it exists because one plausible-looking edit to `CapeInitial` would silently turn every cohort into a rerun of the first. |
 
 Two design notes worth knowing before extending it:
 
-- **`max_sustainable_wr` raises rather than returning its ceiling.** The binary search runs
-  under `hi=0.20`. At horizons of three years or less *every* cohort can sustain more than
-  that, so the old code returned the bound as though it were an answer. It now raises
-  `SearchSaturated`. The headline 30- and 40-year runs peak at 11.0%, so nothing published
-  goes near it.
+- **`max_sustainable_wr` raises rather than returning a bracket end.** Bisection on a
+  success flag only means anything if the bracket straddles the answer, and it converges
+  either way. Both ends are now checked and raise `SearchBracketInvalid`. At the top: the
+  search runs under `hi=0.20`, and at horizons of three years or less *every* cohort can
+  sustain more, so the old code returned the bound as though it were the answer. At the
+  bottom, which is sharper: with `lo=0.05`, the 1966 cohort at 30 years returned exactly
+  `0.050000` — a rate that runs the portfolio out — presented as the safe withdrawal rate.
+  The default bracket cannot trip either guard, and the headline runs peak at 11.0%.
 - **Realized cash share is not capped at 15%.** `CASH_CAP` limits how much the harvest leg
   may move *into* cash, not the resulting share. When the sleeve crashes the denominator
   shrinks and the cash fraction rises above the cap on its own. The cap is asserted only
