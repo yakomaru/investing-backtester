@@ -51,8 +51,16 @@ class Strategy:
     def max_horizon(self) -> int:
         return max(self.horizons)
 
-    def realized_weights(self, H=None):
-        """The equity weights this strategy actually runs with, year by year."""
+    def declared_weights(self, H=None):
+        """The weight schedule this strategy *says* it will run, year by year.
+
+        Named `declared`, not `realized`: this asks the weight function and
+        nothing else. It is a statement of intent, and checking it against the
+        envelope only proves the catalog is internally consistent. Whether the
+        engine honours this schedule is a separate question, answered by
+        tests/test_allocation.py::test_engine_blends_at_the_declared_weights,
+        which reads what simulate() actually did.
+        """
         return [self.weight_fn(yr) for yr in range(H or self.max_horizon)]
 
     def run(self, start_idx, H):

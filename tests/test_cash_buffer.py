@@ -26,9 +26,19 @@ One invariant deliberately NOT asserted
 worth warning the next reader about. CASH_CAP governs how much the harvest leg
 may move *into* cash, not the realized share of the portfolio. When the sleeve
 crashes the denominator shrinks and the cash fraction rises above the cap on its
-own -- measured as high as 15.9% -- without anything having gone wrong. The cap
-is therefore checked only where the engine actually enforces it: at a STATIC
-rebalance, where cash is assigned as total * CASH_CAP outright.
+own, without anything having gone wrong.
+
+The headroom is large, and worth stating precisely, because a figure that is
+merely above 15% invites a "safely loose" bound like `share <= 0.16` which is
+also false. Measured maxima, counting only months where the portfolio still
+holds more than 10% of its starting value so these are not numerical tails:
+22.73% on the four cohorts this file already exercises (harvest-only, equity
+sleeve), and across every start from 1871 to 1962, 28.06% for VA, 42.44% for
+harvest-only and 22.11% for a static rebalance. No fixed ceiling above the cap
+is safe to assert.
+
+The cap is therefore checked only where the engine actually enforces it: at a
+STATIC rebalance, where cash is assigned as total * CASH_CAP outright.
 """
 import numpy as np
 import pytest
@@ -68,6 +78,14 @@ def run(year, kind, sleeve_sf):
     return np.array([(s, b, c) for _, s, b, c, _ in tr], dtype=float), cash_empty
 
 
+# The behavioural checks below take their (kind, sleeve_sf) from `va2.STRATS` --
+# what actually runs -- and assert the result matches DECLARED. Reading the
+# arguments from the same table the assertion is written against would make them
+# self-fulfilling: they would prove only that the engine honours whatever it was
+# handed, and could not see a registry entry whose parameters stopped matching
+# its label.
+
+
 def test_registry_parameters_match_the_labels_they_are_reported_under():
     """Every STRATS entry runs with the allocation its label claims.
 
@@ -98,17 +116,17 @@ def test_strategy_declaring_bonds_actually_holds_bonds(label, year):
     simply gone". Robust to intra-year drift, which is why it is worth having
     alongside the exact ratio check below rather than being subsumed by it.
     """
-    kind, sleeve_sf, _ = DECLARED[label]
-    if sleeve_sf >= 1.0:
+    _, declared_sf, _ = DECLARED[label]
+    if declared_sf >= 1.0:
         pytest.skip("declares an all-equity sleeve, so holding no bonds is correct")
-
+    kind, sleeve_sf = va2.STRATS[label]   # what actually runs
     buckets, _ = run(year, kind, sleeve_sf)
     stock, bond = buckets[:, 0], buckets[:, 1]
     invested = stock + bond
     live = invested > 1e-9
     assert live.any(), "cohort never held an invested sleeve at all"
     assert np.all(bond[live] > 0.0), (
-        f"{label!r} declares a {1 - sleeve_sf:.0%} bond sleeve but held zero bonds "
+        f"{label!r} declares a {1 - declared_sf:.0%} bond sleeve but held zero bonds "
         f"in {int((~(bond > 0))[live].sum())} of {int(live.sum())} live months "
         f"of the {year} cohort"
     )
@@ -126,7 +144,8 @@ def test_sleeve_is_rebalanced_to_its_declared_split(label, year):
     be asserting that markets do not move. VA and HARVEST re-impose the ratio
     every month, so for those this is simply the tighter check.
     """
-    kind, sleeve_sf, _ = DECLARED[label]
+    _, declared_sf, _ = DECLARED[label]
+    kind, sleeve_sf = va2.STRATS[label]   # what actually runs
     buckets, _ = run(year, kind, sleeve_sf)
     stock, bond = buckets[:, 0], buckets[:, 1]
     invested = stock + bond
@@ -136,8 +155,8 @@ def test_sleeve_is_rebalanced_to_its_declared_split(label, year):
     assert at_rebalance.any(), "cohort never reached a rebalance with money left"
 
     realized = stock[at_rebalance] / invested[at_rebalance]
-    assert np.allclose(realized, sleeve_sf, atol=1e-9), (
-        f"{label!r} declares a {sleeve_sf:.0%} stock sleeve but rebalances to "
+    assert np.allclose(realized, declared_sf, atol=1e-9), (
+        f"{label!r} declares a {declared_sf:.0%} stock sleeve but rebalances to "
         f"between {realized.min():.4f} and {realized.max():.4f} in the {year} cohort"
     )
 
@@ -151,7 +170,8 @@ def test_cash_buffer_exists_exactly_when_it_is_declared(label, year):
     strategy whose buffer was never funded would run as a pure invested sleeve
     while every table still called it cash-buffered.
     """
-    kind, sleeve_sf, holds_cash = DECLARED[label]
+    _, _, holds_cash = DECLARED[label]
+    kind, sleeve_sf = va2.STRATS[label]   # what actually runs
     buckets, _ = run(year, kind, sleeve_sf)
     cash = buckets[:, 2]
 

@@ -53,14 +53,28 @@ def test_failing_cohort_spends_exactly_what_was_left():
     This is the cross-check the padding can break: spend_path[k] is not the
     requested FAIL_WR, it is whatever the portfolio still held, and the only
     other record of that amount is balance_path[k-1].
+
+    The failure year is located from the *balance* path, not the spend path,
+    and that choice is the whole test. Locating it as "the first year spending
+    less than requested" derives the index from the array under validation,
+    which makes the assertion self-referential: under an engine that books the
+    requested withdrawal instead of the remaining balance, k slides forward
+    into the zero-padding and the check degenerates to asserting 0.0 == 0.0.
+    Verified -- that mutant passes every assertion here when k comes from the
+    spend path, and is caught only by the golden snapshot. balance_path[k] is
+    independent of the quantity being checked, so it cannot drift with it.
     """
     r = bt.simulate(bt.jan_index(FAIL_YEAR), H, WF, bt.FixedReal(FAIL_WR))
     spend, bal = r["spend_path"], r["balance_path"]
 
-    full = np.flatnonzero(spend < FAIL_WR - 1e-12)
-    assert len(full) > 0, "expected a partial final withdrawal"
-    k = int(full[0])
+    zeroed = np.flatnonzero(bal == 0.0)
+    assert len(zeroed) > 0, "expected the portfolio to be zeroed on failure"
+    k = int(zeroed[0])
     assert k > 0, "cohort failed on its very first withdrawal; pick a lower rate"
+    assert spend[k] < FAIL_WR - 1e-12, (
+        f"year {k} zeroed the portfolio but still booked a full {FAIL_WR} "
+        f"withdrawal of {spend[k]!r}"
+    )
 
     assert np.allclose(spend[:k], FAIL_WR), "years before failure were not funded in full"
     assert 0.0 <= spend[k] < FAIL_WR, "the partial withdrawal is not a partial withdrawal"

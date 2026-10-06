@@ -69,30 +69,41 @@ def test_search_result_actually_brackets_the_failure_point(horizon):
         )
 
 
-def test_success_is_monotone_in_withdrawal_rate():
+@pytest.mark.parametrize("horizon", [30, 40])
+@pytest.mark.parametrize("w", [0.50, 0.60, 0.75, 1.00])
+def test_success_is_monotone_in_withdrawal_rate(w, horizon):
     """Once a cohort fails at some rate, it fails at every higher rate.
 
     The soundness precondition of the bisection in max_sustainable_wr. Spending
     strictly more every year leaves a portfolio strictly smaller at every point,
     so failure cannot un-happen -- but that argument is about FixedReal, and
     the search hard-codes FixedReal, so this pins the pairing rather than the
-    policy alone. Enumerated over every 30-year cohort at 0.25% steps.
+    policy alone.
+
+    Swept over every published allocation at both published horizons, not just
+    the 60/40 30-year case. The property has no reason to be allocation- or
+    horizon-specific, and SAFEMAX is reported for all eight combinations, so
+    testing one of them left the other seven resting on an argument rather
+    than a measurement. Exhaustive over cohorts at 0.25% steps; a finer 0.05%
+    grid was also checked by hand and finds no violation either, so the step
+    is chosen for runtime, not because it is near a boundary.
     """
+    wf = bt.static_w(w)
     grid = np.arange(0.0, 0.2001, 0.0025)
     offenders = []
-    for year in bt.cohort_start_years(30):
+    for year in bt.cohort_start_years(horizon):
         i = bt.jan_index(year)
         failed_at = None
         for wr in grid:
-            ok = bt.simulate(i, 30, WF, bt.FixedReal(float(wr)))["success"]
+            ok = bt.simulate(i, horizon, wf, bt.FixedReal(float(wr)))["success"]
             if not ok and failed_at is None:
                 failed_at = wr
             elif ok and failed_at is not None:
                 offenders.append((year, float(failed_at), float(wr)))
                 break
     assert not offenders, (
-        "success came back after failing, so bisection on it is unsound: "
-        f"{offenders[:5]}"
+        f"w={w} H={horizon}: success came back after failing, so bisection on "
+        f"it is unsound: {offenders[:5]}"
     )
 
 

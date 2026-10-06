@@ -17,6 +17,8 @@ re-bless the snapshot deliberately is the correct amount of friction.
 """
 import subprocess
 import sys
+
+import numpy as np
 from pathlib import Path
 
 import pytest
@@ -87,3 +89,108 @@ def test_catalog_reproduces_headline_numbers(key):
     assert round(got["safemax"] * 100, 2) == pytest.approx(safemax, abs=0.005)
     assert round(got["succ4"] * 100, 2) == pytest.approx(succ4, abs=0.005)
     assert got["worst_year"] == worst
+
+# The policy-bearing rows of run_analysis.py sections 4 and 5, read off the
+# blessed snapshot. Without these, the four CAPE and two Guyton-Klinger catalog
+# entries have no numeric tie to the script at all: their declared allocation is
+# a flat 60/40, so the envelope checks pass whatever spending rule is bound to
+# them, and swapping CapeInitial(0.010, 0.5) for CapeInitial(0.099, 0.5) or
+# GuytonKlinger(0.05) for GuytonKlinger(0.12) was verified to leave the whole
+# suite green. These rows close that.
+CAPE_HEADLINE = {
+    # name: (successes, avg wr0 %, min wr0 %, max wr0 %, avg spend %, failures)
+    "cape a=1.5%,b=0.5 @60/40":       (106, 5.19, 3.35, 11.26, 4.99, 17),
+    "cape a=1.5%,b=0.5 cap6% @60/40": (113, 4.89, 3.35,  6.00, 4.79, 10),
+    "cape a=1.0%,b=0.5 @60/40":       (113, 4.73, 2.85, 10.76, 4.66, 10),
+    "cape a=2.0%,b=0.4 @60/40":       (111, 4.95, 3.48,  9.81, 4.88, 12),
+}
+
+GK_HEADLINE = {
+    # name: (successes, worst min spend %, avg min spend %, cohorts ever below
+    #        the flat-4% level, share of all cohort-years below it %,
+    #        avg final-year spend %, median final-year spend %)
+    "GK start 5.0% @60/40": (123, 34.87, 74.00, 67, 23.17, 111.04, 104.61),
+    "GK start 5.5% @60/40": (123, 31.38, 69.79, 66, 22.82,  95.44,  86.45),
+}
+
+FLAT4 = 0.04  # the 4%-rule real spending level, as run_analysis.py defines it
+
+
+@pytest.mark.parametrize("name", list(CAPE_HEADLINE))
+def test_catalog_reproduces_cape_headline_row(name):
+    """The bound CAPE policy reproduces its published row.
+
+    Ties the spending rule to the table. The allocation checks cannot do this:
+    every CAPE entry declares a flat 60/40, so they stay green no matter what
+    policy is attached.
+    """
+    import backtest as bt
+
+    succ_e, avg_e, min_e, max_e, spend_e, fails_e = CAPE_HEADLINE[name]
+    strat = st.BY_NAME[name]
+    years = bt.cohort_start_years(30)
+
+    wr0s, spends, succ = [], [], 0
+    for y in years:
+        policy = strat.policy_factory()
+        r = bt.simulate(bt.jan_index(y), 30, strat.weight_fn, policy)
+        wr0s.append(policy.initial_wr)
+        spends.append(r["spend_path"].mean())
+        succ += r["success"]
+
+    assert succ == succ_e, f"{name}: {succ}/{len(years)} funded, table says {succ_e}"
+    assert len(years) - succ == fails_e
+    assert round(float(np.mean(wr0s)) * 100, 2) == pytest.approx(avg_e, abs=0.005)
+    assert round(float(np.min(wr0s)) * 100, 2) == pytest.approx(min_e, abs=0.005)
+    assert round(float(np.max(wr0s)) * 100, 2) == pytest.approx(max_e, abs=0.005)
+    assert round(float(np.mean(spends)) * 100, 2) == pytest.approx(spend_e, abs=0.005)
+
+
+@pytest.mark.parametrize("name", list(GK_HEADLINE))
+def test_catalog_reproduces_guardrail_headline_row(name):
+    """The bound Guyton-Klinger policy reproduces its published row.
+
+    The guardrail rows are the ones whose headline claim is about *spending
+    cuts* rather than success, so the numbers pinned here are the depth and
+    frequency of those cuts -- which is the whole point of the section and
+    invisible to every other invariant in the suite.
+    """
+    import backtest as bt
+
+    (succ_e, worst_e, avg_min_e, ever_e, share_e,
+     final_avg_e, final_med_e) = GK_HEADLINE[name]
+    strat = st.BY_NAME[name]
+    years = bt.cohort_start_years(30)
+
+    succ, min_fracs, below4_shares, end_fracs, ever_below = 0, [], [], [], 0
+    for y in years:
+        r = bt.simulate(bt.jan_index(y), 30, strat.weight_fn, strat.policy_factory())
+        succ += r["success"]
+        sp = r["spend_path"]
+        min_fracs.append(sp.min() / sp[0])
+        below4_shares.append(float(np.mean(sp < FLAT4)))
+        end_fracs.append(sp[-1] / sp[0])
+        ever_below += bool((sp < FLAT4).any())
+
+    assert succ == succ_e
+    assert ever_below == ever_e
+    assert round(float(np.min(min_fracs)) * 100, 2) == pytest.approx(worst_e, abs=0.005)
+    assert round(float(np.mean(min_fracs)) * 100, 2) == pytest.approx(avg_min_e, abs=0.005)
+    assert round(float(np.mean(below4_shares)) * 100, 2) == pytest.approx(share_e, abs=0.005)
+    assert round(float(np.mean(end_fracs)) * 100, 2) == pytest.approx(final_avg_e, abs=0.005)
+    assert round(float(np.median(end_fracs)) * 100, 2) == pytest.approx(final_med_e, abs=0.005)
+
+
+def test_every_catalog_strategy_is_tied_to_a_published_number():
+    """No catalog entry escapes all three headline tables.
+
+    The catalog is a second copy of run_analysis.py's definitions, and the only
+    thing keeping a copy honest is that something checks it. An entry pinned by
+    nothing is free to drift, so adding one has to mean adding its row too.
+    """
+    pinned = ({n for n, _ in HEADLINE} | set(CAPE_HEADLINE) | set(GK_HEADLINE))
+    missing = [s.name for s in st.CATALOG if s.name not in pinned]
+    assert not missing, (
+        f"catalog entries tied to no published number: {missing}. Add them to "
+        f"HEADLINE, CAPE_HEADLINE or GK_HEADLINE."
+    )
