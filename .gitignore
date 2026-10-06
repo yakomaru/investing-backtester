@@ -27,3 +27,6 @@ __pycache__/
 
 # pytest
 .pytest_cache/
+
+# Session brief for the harness work; kept local
+HANDOFF.md
