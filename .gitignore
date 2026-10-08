@@ -24,3 +24,9 @@ __pycache__/
 
 # Scraped reference HTML (also keeps GitHub from tagging the repo as HTML)
 *.html
+
+# pytest
+.pytest_cache/
+
+# Session brief for the harness work; kept local
+HANDOFF.md

@@ -1,0 +1,64 @@
+==============================================================================
+SHILLER US DATA  Jan 1871 - Sep 2023  | real total returns
+Stocks = S&P Composite (divs reinvested) | Bonds = 10y Treasury approx
+==============================================================================
+
+### FIXED-REAL WITHDRAWALS, 30-YR HORIZON  (start years 1871-1993, n=123 cohorts)
+
+alloc    succ@4%  SAFEMAX  worst yr   worst-5 (yr:max sustainable WR %)
+50/50     95.12%    3.69%      1966   [(1966, 3.69), (1965, 3.76), (1968, 3.93), (1967, 3.94), (1969, 3.98)]
+60/40     96.75%    3.74%      1966   [(1966, 3.74), (1965, 3.84), (1968, 3.97), (1969, 3.99), (1967, 4.04)]
+75/25     97.56%    3.78%      1966   [(1966, 3.78), (1965, 3.93), (1969, 3.99), (1968, 4.0), (1967, 4.17)]
+100/0     97.56%    3.79%      1929   [(1929, 3.79), (1966, 3.8), (1969, 3.91), (1968, 4.01), (1965, 4.04)]
+
+### FIXED-REAL WITHDRAWALS, 40-YR HORIZON  (start years 1871-1983, n=113 cohorts)
+
+alloc    succ@4%  SAFEMAX  worst yr   worst-5
+50/50     85.84%    3.41%      1966   [(1966, 3.41), (1965, 3.46), (1968, 3.65), (1964, 3.65), (1967, 3.65)]
+60/40     92.04%    3.47%      1966   [(1966, 3.47), (1965, 3.55), (1968, 3.71), (1969, 3.73), (1967, 3.77)]
+75/25     92.92%    3.54%      1966   [(1966, 3.54), (1965, 3.67), (1969, 3.75), (1968, 3.77), (1906, 3.9)]
+100/0     93.81%    3.59%      1966   [(1966, 3.59), (1929, 3.64), (1969, 3.71), (1968, 3.8), (1965, 3.8)]
+
+### RISING EQUITY GLIDEPATH vs STATIC, 30-YR
+
+strategy                succ@4%  SAFEMAX  worst yr
+static 60/40             96.75%    3.74%      1966
+static 75/25             97.56%    3.78%      1966
+glide 60->100 / 15yr     98.37%    3.85%      1966
+glide 30->70 / 15yr      96.75%    3.76%      1966
+
+### CAPE-BASED INITIAL WR  (wr0 = a + b/CAPE, then fixed-real), 30-YR, 60/40
+
+variant                succ  avg wr0  min wr0  max wr0  avg spend  #fail
+a=1.5%,b=0.5         106/123    5.19%    3.35%   11.26%      4.99%     17  fails=[1908, 1909, 1910, 1911, 1912, 1913, 1914, 1915, 1916, 1917, 1918, 1919, 1920, 1921, 1922, 1933, 1975]
+a=1.5%,b=0.5 cap6%   113/123    4.89%    3.35%    6.00%      4.79%     10  fails=[1908, 1909, 1910, 1911, 1912, 1913, 1914, 1915, 1916, 1917]
+a=1.0%,b=0.5         113/123    4.73%    2.85%   10.76%      4.66%     10  fails=[1912, 1913, 1914, 1915, 1916, 1917, 1918, 1919, 1920, 1921]
+a=2.0%,b=0.4         111/123    4.95%    3.48%    9.81%      4.88%     12  fails=[1908, 1909, 1910, 1911, 1912, 1913, 1914, 1915, 1916, 1917, 1918, 1919]
+flat 4.0% (ref)      119/123    4.00%    4.00%    4.00%      3.99%      0
+
+  Initial WR the a=1.5%,b=0.5 rule produced at CAPE extremes:
+    1921: CAPE=  5.1  -> wr0=11.26%
+    1920: CAPE=  6.0  -> wr0=9.85%
+    1919: CAPE=  6.1  -> wr0=9.70%
+    1929: CAPE= 27.1  -> wr0=3.35%
+    1966: CAPE= 24.1  -> wr0=3.58%
+    1965: CAPE= 23.3  -> wr0=3.65%
+
+### GUYTON-KLINGER GUARDRAILS, 30-YR, 60/40, start 5.0%
+
+start 5.00%: success=123/123  (100.00%)
+   worst-cohort min real spend = 34.87% of its own start (i.e., cut to 1.74% of initial portfolio)
+   avg-cohort min real spend    = 74.00% of its own start
+   cohorts whose spending EVER fell below the flat-4% level: 67/123 (54.47%)
+   of ALL cohort-years, fraction spent below flat-4% level: 23.17%
+   avg final-year real spend = 111.04% of initial spend (median 104.61%)
+   deepest-cut cohorts (start yr : min spend vs own start): [(1965, '34.87%'), (1964, '34.87%'), (1962, '34.87%'), (1966, '34.87%')]
+start 5.50%: success=123/123  (100.00%)
+   worst-cohort min real spend = 31.38% of its own start (i.e., cut to 1.73% of initial portfolio)
+   avg-cohort min real spend    = 69.79% of its own start
+   cohorts whose spending EVER fell below the flat-4% level: 66/123 (53.66%)
+   of ALL cohort-years, fraction spent below flat-4% level: 22.82%
+   avg final-year real spend = 95.44% of initial spend (median 86.45%)
+   deepest-cut cohorts (start yr : min spend vs own start): [(1966, '31.38%'), (1965, '31.38%'), (1964, '31.38%'), (1962, '31.38%')]
+
+DONE

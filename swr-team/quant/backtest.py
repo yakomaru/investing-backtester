@@ -17,15 +17,59 @@ Return series come from shiller_monthly.csv (built by load_data.py):
 """
 import numpy as np
 import pandas as pd
+from pathlib import Path
+from typing import Callable, NamedTuple, Protocol, runtime_checkable
 
-df = pd.read_csv("shiller_monthly.csv")
-RS = df["stock_ret_real"].values   # monthly real stock return
-RB = df["bond_ret_real"].values    # monthly real bond return
-CAPE = df["CAPE"].values
-YEAR = df["year"].values
-MONTH = df["month"].values
-N = len(df)
-BASE_YEAR = int(YEAR[0])            # 1871
+DEFAULT_CSV = Path(__file__).with_name("shiller_monthly.csv")
+
+
+class Series(NamedTuple):
+    """One monthly real-return world: the arrays every backtest reads.
+
+    Bundled behind `load_series` so the data can be loaded from an explicit
+    path instead of only from the process's current working directory, which
+    is what previously made this module importable only from inside
+    swr-team/quant/.
+    """
+    df: pd.DataFrame
+    RS: np.ndarray        # monthly real stock return
+    RB: np.ndarray        # monthly real bond return
+    CAPE: np.ndarray
+    YEAR: np.ndarray
+    MONTH: np.ndarray
+    N: int
+    BASE_YEAR: int        # first year in the file (1871 for the Shiller series)
+
+
+def load_series(path=DEFAULT_CSV):
+    """Load the monthly series from `path`, defaulting to the CSV beside this file."""
+    df = pd.read_csv(path)
+    year = df["year"].values
+    return Series(
+        df=df,
+        RS=df["stock_ret_real"].values,
+        RB=df["bond_ret_real"].values,
+        CAPE=df["CAPE"].values,
+        YEAR=year,
+        MONTH=df["month"].values,
+        N=len(df),
+        BASE_YEAR=int(year[0]),
+    )
+
+
+# The default series, loaded at import as before. The existing run_*.py scripts
+# read these bare module names (bt.RS, bt.CAPE, bt.N, ...), so they are kept
+# exactly as they were; the only behavioural change is that the CSV is now
+# located relative to this file rather than the current working directory.
+SERIES = load_series()
+df = SERIES.df
+RS = SERIES.RS
+RB = SERIES.RB
+CAPE = SERIES.CAPE
+YEAR = SERIES.YEAR
+MONTH = SERIES.MONTH
+N = SERIES.N
+BASE_YEAR = SERIES.BASE_YEAR
 
 def jan_index(y):
     """Month index of January of year y (data is contiguous from Jan 1871)."""
@@ -96,6 +140,47 @@ def simulate(start_idx, H, weight_fn, policy):
 
 
 # ----------------------------------------------------------------------------
+# the two plug-in points of a backtest, named
+# ----------------------------------------------------------------------------
+WeightFn = Callable[[int], float]
+"""Target equity weight for retirement year `yr`.
+
+Takes `yr` and nothing else on purpose: a weight function is structurally
+incapable of seeing a return, so allocation cannot react to the future. That
+property is enforced by this signature, not by a test.
+"""
+
+
+@runtime_checkable
+class SpendingPolicy(Protocol):
+    """What `simulate` requires of a spending rule.
+
+    This protocol was always implicit -- FixedReal, CapeInitial and
+    GuytonKlinger have satisfied it since they were written. Naming it gives
+    `Strategy` (see strategies.py) something to bind a declared allocation to,
+    and gives the invariants a single contract to check against.
+
+    `initial_wr` is the rate the policy started from, which is what the
+    guardrail logic and the reporting scripts read back afterwards. Note that
+    CapeInitial cannot know it until the cohort's CAPE is seen, so it is None
+    until `next_spend` has been called with yr == 0.
+
+    `next_spend` receives (yr, port, prev, cape0) and nothing else -- like
+    WeightFn, it has no channel through which future returns could reach it.
+
+    runtime_checkable so the harness can assert conformance with isinstance.
+    That only verifies the members exist, not their signatures, which is the
+    right strength here: it catches a policy that forgot `initial_wr`, and it
+    does not pretend to catch one whose arithmetic is wrong.
+    """
+
+    initial_wr: float
+
+    def next_spend(self, yr: int, port: float, prev, cape0: float) -> float:
+        ...
+
+
+# ----------------------------------------------------------------------------
 # spending policies
 # ----------------------------------------------------------------------------
 class FixedReal:
@@ -157,8 +242,58 @@ def success_rate(H, weight_fn, policy_factory, start_years):
         ok += r["success"]
     return ok / len(start_years)
 
+class SearchBracketInvalid(RuntimeError):
+    """max_sustainable_wr's answer lies outside the bracket it was given.
+
+    Bisection on a success flag is only meaningful when the bracket straddles
+    the answer: `lo` must be sustainable and `hi` must not. If either end is
+    wrong the search still converges and still returns a number, and that
+    number is a bound wearing the costume of an answer. Raised at both ends --
+    see the guards in max_sustainable_wr.
+    """
+
+
+# Kept as an alias: the hi-side case really is saturation, and that is the one
+# a caller is likely to hit.
+SearchSaturated = SearchBracketInvalid
+
+
 def max_sustainable_wr(start_idx, H, weight_fn, lo=0.0, hi=0.20, tol=1e-5):
-    """Highest fixed-real WR this cohort can sustain for H years (binary search)."""
+    """Highest fixed-real WR this cohort can sustain for H years (binary search).
+
+    Raises SearchBracketInvalid if the answer is outside [lo, hi], at either
+    end. Bisection converges regardless and returns a number either way, which
+    is the whole problem.
+
+    The `hi` end: if the cohort can already sustain `hi`, the search cannot
+    distinguish "the answer is 20%" from "the answer is at least 20%" -- it
+    converges lo up to hi and returns the ceiling silently. Not hypothetical:
+    at H<=3 every cohort in the Shiller series saturates (the true answer at
+    H=1 is ~100%), and at H=5, 116 of 148 do.
+
+    The `lo` end: if `lo` itself is unsustainable, every probe fails, `hi`
+    converges down to `lo`, and the function returns `lo` -- a rate that does
+    not survive the horizon. With the default lo=0.0 this cannot happen, since
+    withdrawing nothing always succeeds, but a caller narrowing the bracket
+    gets a failing rate presented as the safe one: max_sustainable_wr for 1966
+    at H=30 with lo=0.05 returns exactly 0.050000, and that rate runs out.
+
+    Both checks are explicit simulates rather than an after-the-fact
+    `lo >= hi - tol` test, so the precondition is verified before the search
+    runs rather than inferred from where it landed. The headline H=30/40 runs
+    use the default bracket and peak at 11.0%, so neither guard fires there.
+    """
+    if simulate(start_idx, H, weight_fn, FixedReal(hi))["success"]:
+        raise SearchBracketInvalid(
+            f"cohort at index {start_idx} sustains the search ceiling hi={hi:.4f} "
+            f"for H={H}, so the true max is above it; raise hi to get a real answer"
+        )
+    if not simulate(start_idx, H, weight_fn, FixedReal(lo))["success"]:
+        raise SearchBracketInvalid(
+            f"cohort at index {start_idx} cannot sustain the search floor "
+            f"lo={lo:.4f} for H={H}, so the true max is below it; lower lo to "
+            f"get a real answer rather than lo itself, which fails"
+        )
     for _ in range(40):
         mid = (lo + hi) / 2
         if simulate(start_idx, H, weight_fn, FixedReal(mid))["success"]:
